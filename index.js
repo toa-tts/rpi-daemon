@@ -25,6 +25,16 @@
         omx.getPosition(function (error) {
             if (playing) {
                 if (error) {
+                    if (playing.repeat > 1) {
+                        playing.times += 1;
+
+                        if (playing.repeat > playing.times) {
+                            playing = false;
+                            play();
+                            return;
+                        }
+                    }
+
                     stop();
                 } else {
                     handle = setTimeout(check, 1000);
@@ -37,7 +47,7 @@
         if (!playing && queue.length) {
             playing = files[queue[0]];
 
-            fs.writeFileSync(mp3, Buffer.from(playing.content, "base64"));
+            fs.writeFileSync(mp3, playing.content);
 
             if (playing.volume) {
                 volume = playing.volume;
@@ -66,14 +76,14 @@
         }
     }
 
-    function sync() {
+    function sync(target) {
         let info;
         let list = [];
 
         queue.forEach(function (id) {
             let data = files[id];
 
-            list.push({id, title: data.title, volume: data.volume});
+            list.push({id, title: data.title, volume: data.volume, repeat: data.repeat, times: data.times});
         });
 
         info = {list, volume};
@@ -88,9 +98,13 @@
             info.status = "stop";
         }
 
-        clients.forEach(function (client) {
-            client.emit(":info", info);
-        });
+        if (target) {
+            target.emit(":info", info);
+        } else {
+            clients.forEach(function (client) {
+                client.emit(":info", info);
+            });
+        }
     }
 
     function toVolume(value) {
@@ -122,6 +136,20 @@
                 return;
             }
 
+            try {
+                data.content = Buffer.from(data.content, "base64");
+            } catch (ignore) {
+                return;
+            }
+
+            data.repeat = parseInt(data.repeat, 10);
+
+            if (data.repeat < 1) {
+                data.repeat = 1;
+            }
+
+            data.times = 0;
+
             queue.push(data.id);
             files[data.id] = data;
 
@@ -133,12 +161,14 @@
         });
 
         client.on(":stop", function (data) {
-            if (files[data.id]) {
-                if (playing.id === data.id) {
+            let file = files[data.id];
+
+            if (file) {
+                if (playing.id === file.id) {
                     stop(true);
                 } else {
-                    queue = queue.filter((id) => id !== data.id);
-                    delete files[data.id];
+                    queue = queue.filter((id) => id !== file.id);
+                    delete files[file.id];
                     sync();
                 }
             }
@@ -171,6 +201,7 @@
         });
 
         clients.push(client);
+        sync(client);
     });
 
     server.listen(8000);
